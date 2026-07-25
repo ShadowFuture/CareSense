@@ -1,0 +1,24 @@
+{
+  "event": "normal",
+  "event_type": "normal",
+  "risk_score": 10,
+  "confidence": 0.51,
+  "warnings": [
+    "No critical event detected."
+  ],
+  "recommendations": [
+    "Continue monitoring patient status."
+  ],
+  "summary_short": "Normal activity detected.",
+  "summary_long": "No critical event pattern was detected in the current webcam frame.",
+  "timestamp": "2026-07-25T14:59:18",
+  "source": "webcam",
+  "capture": {
+    "device_index": 0,
+    "frame_width": 640,
+    "frame_height": 480,
+    "motion_intensity": 0.01,
+    "facial_asymmetry": 0.0,
+    "frame_quality": 0.53
+  }
+}

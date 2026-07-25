@@ -1,0 +1,25 @@
+{
+  "source": "pulse_online",
+  "timestamp": "2026-07-25T14:56:55",
+  "prediction": {
+    "timestamp": "2026-07-25T14:56:55",
+    "estimated_bpm": null,
+    "estimated_hrv": null,
+    "event_type": "waiting_for_signal",
+    "risk_score": 0,
+    "confidence_score": 0.0,
+    "wellbeing_score": 0.0,
+    "wellbeing": "feeling bad",
+    "confidence": "feeling bad",
+    "warnings": "No heart-rate signal detected yet",
+    "recommendation": "Adjust the webcam and keep the face visible",
+    "short_summary": "Waiting for a usable pulse signal.",
+    "long_summary": "The camera is active, but a stable pulse signal has not been extracted yet. Keep the face in view and stay steady for a few seconds."
+  },
+  "capture": {
+    "device_index": 0,
+    "image_quality": 0.1,
+    "signal_sample_count": 0,
+    "signal_samples": []
+  }
+}
