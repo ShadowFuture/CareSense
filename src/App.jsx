@@ -1,6 +1,6 @@
-﻿import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
-const backendBase = '/api';
+const backendBase = 'http://localhost:8000';
 
 const pages = [
   { key: 'home', label: 'Overview' },
