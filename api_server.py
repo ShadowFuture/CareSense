@@ -7,6 +7,22 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+# -----------------------------
+# ARDUINO SUPPORT
+# -----------------------------
+try:
+    from arduino import init_arduino, send_to_arduino
+except Exception:  # pragma: no cover - hardware dependency guard
+    def init_arduino():
+        return None
+
+    def send_to_arduino(message):
+        return None
+
+# -----------------------------
+# EXISTING BACKEND CODE
+# -----------------------------
+
 BACKEND_DIR = Path(__file__).resolve().parent
 PULSE_SCRIPT = BACKEND_DIR / "PulseONLINE.py"
 ML_SCRIPT = BACKEND_DIR / "CareSenseML.py"
@@ -85,66 +101,115 @@ def process_running(name):
 
 
 def start_module(name):
-    if process_running(name):
-        return {"success": True, "running": True, "message": "Already running."}
+    try:
+        if process_running(name):
+            return {"success": True, "running": True, "status": "online", "message": "Already running."}
 
-    script_path = SCRIPT_MAP[name]
-    if not script_path.exists():
-        return {"success": False, "running": False, "message": f"Script not found: {script_path.name}"}
+        script_path = SCRIPT_MAP[name]
+        if not script_path.exists():
+            return {"success": False, "running": False, "status": "offline", "message": f"Script not found: {script_path.name}"}
 
-    creation_flags = 0
-    if os.name == "nt":
-        creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP
+        creation_flags = 0
+        if os.name == "nt":
+            creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP
 
-    proc = subprocess.Popen(
-        [sys.executable, str(script_path)],
-        cwd=str(BACKEND_DIR),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        creationflags=creation_flags,
-    )
-    PROCESSES[name] = proc
-    write_pid(name, proc.pid)
-    return {"success": True, "running": True, "message": "Module started.", "pid": proc.pid}
+        proc = subprocess.Popen(
+            [sys.executable, str(script_path)],
+            cwd=str(BACKEND_DIR),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creation_flags,
+        )
+        PROCESSES[name] = proc
+        write_pid(name, proc.pid)
+        return {"success": True, "running": True, "status": "online", "message": "Module started.", "pid": proc.pid}
+    except Exception as exc:
+        return {"success": False, "running": False, "status": "offline", "message": f"Failed to start module: {exc}"}
 
 
 def stop_module(name):
-    proc = get_process(name)
-    stopped = False
-    if proc:
-        try:
-            proc.terminate()
-            proc.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-        except Exception:
-            pass
-        PROCESSES[name] = None
-        stopped = True
-
-    pid = read_pid(name)
-    if pid and is_pid_active(pid):
-        try:
-            if os.name == "nt":
-                os.kill(pid, signal.SIGTERM)
-            else:
-                os.kill(pid, signal.SIGTERM)
+    try:
+        proc = get_process(name)
+        stopped = False
+        if proc:
+            try:
+                proc.terminate()
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            except Exception:
+                pass
+            PROCESSES[name] = None
             stopped = True
-        except Exception:
-            pass
 
-    remove_pid(name)
-    if stopped:
-        return {"success": True, "running": False, "message": "Module stopped."}
-    return {"success": True, "running": False, "message": "Module was not running."}
+        pid = read_pid(name)
+        if pid and is_pid_active(pid):
+            try:
+                if os.name == "nt":
+                    os.kill(pid, signal.SIGTERM)
+                else:
+                    os.kill(pid, signal.SIGTERM)
+                stopped = True
+            except Exception:
+                pass
+
+        remove_pid(name)
+        if stopped:
+            return {"success": True, "running": False, "status": "offline", "message": "Module stopped."}
+        return {"success": True, "running": False, "status": "offline", "message": "Module was not running."}
+    except Exception as exc:
+        return {"success": False, "running": False, "status": "offline", "message": f"Failed to stop module: {exc}"}
+
+
+def _is_serious_condition(data):
+    if not isinstance(data, dict):
+        return False
+
+    candidate_payloads = []
+    if isinstance(data.get("prediction"), dict):
+        candidate_payloads.append(data["prediction"])
+    if isinstance(data.get("result"), dict):
+        candidate_payloads.append(data["result"])
+    candidate_payloads.append(data)
+
+    for payload in candidate_payloads:
+        for key in ("prediction", "event_type", "event", "status"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.lower() in {"serious", "danger", "critical", "emergency", "abnormal", "abnormal_movement", "stroke_like_asymmetry"}:
+                return True
+
+        for key in ("risk_score", "confidence"):
+            value = payload.get(key)
+            if isinstance(value, (int, float)):
+                if value > 1.0:
+                    return value >= 50.0
+                if value > 0.8:
+                    return True
+
+    return False
+
+
+def _update_arduino_alert(data):
+    try:
+        if _is_serious_condition(data):
+            send_to_arduino("ALERT")
+        else:
+            send_to_arduino("CLEAR")
+    except Exception:
+        pass
 
 
 def get_module_status(name):
-    output_file = PULSE_OUTPUT if name == "pulse" else ML_OUTPUT
-    result = load_json_file(output_file)
-    result["running"] = process_running(name)
-    result["last_checked"] = __import__("datetime").datetime.now().isoformat()
-    return result
+    try:
+        output_file = PULSE_OUTPUT if name == "pulse" else ML_OUTPUT
+        result = load_json_file(output_file)
+        result["running"] = process_running(name)
+        result["last_checked"] = __import__("datetime").datetime.now().isoformat()
+        result["status"] = "online" if result["running"] else "offline"
+        _update_arduino_alert(result)
+        return result
+    except Exception:
+        return {"status": "offline", "running": False, "last_checked": __import__("datetime").datetime.now().isoformat()}
 
 
 class ApiHandler(BaseHTTPRequestHandler):
@@ -180,6 +245,29 @@ class ApiHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/")
 
+        # -----------------------------
+        # ARDUINO ENDPOINT
+        # -----------------------------
+        if path == "/api/arduino/send":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length).decode("utf-8")
+                data = json.loads(body) if body else {}
+            except Exception:
+                data = {}
+
+            try:
+                msg = data.get("message")
+                if msg:
+                    send_to_arduino(msg)
+                    self._send_json({"success": True, "sent": msg})
+                else:
+                    self._send_json({"error": "No message provided"}, status=400)
+            except Exception:
+                self._send_json({"error": "Failed to send Arduino command"}, status=500)
+            return
+
+        # Existing endpoints
         if path == "/api/pulse/start":
             self._send_json(start_module("pulse"))
             return
@@ -200,6 +288,11 @@ class ApiHandler(BaseHTTPRequestHandler):
 
 
 def run_server(host="127.0.0.1", port=8000):
+    try:
+        init_arduino()
+    except Exception:
+        pass
+
     server_address = (host, port)
     httpd = ThreadingHTTPServer(server_address, ApiHandler)
     print(f"Backend API running at http://{host}:{port}")
